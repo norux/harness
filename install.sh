@@ -3,7 +3,7 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-source_file="$repo_dir/agents/personal-coding-style.md"
+source_file="$repo_dir/docs/personal-coding-style.md"
 
 backup_file() {
   path="$1"
@@ -11,28 +11,23 @@ backup_file() {
   mv "$path" "$path.backup.$timestamp"
 }
 
-link_file() {
+write_file() {
   target="$1"
+  content="$2"
 
   mkdir -p "$(dirname -- "$target")"
 
-  if [ -L "$target" ]; then
-    current=$(readlink "$target")
-    if [ "$current" = "$source_file" ]; then
-      printf 'already linked: %s\n' "$target"
-      return
-    fi
-    rm "$target"
-  elif [ -e "$target" ]; then
-    if cmp -s "$source_file" "$target"; then
-      rm "$target"
-    else
-      backup_file "$target"
-    fi
+  if [ -f "$target" ] && [ "$(cat "$target")" = "$content" ]; then
+    printf 'already configured: %s\n' "$target"
+    return
   fi
 
-  ln -s "$source_file" "$target"
-  printf 'linked: %s -> %s\n' "$target" "$source_file"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    backup_file "$target"
+  fi
+
+  printf '%s\n' "$content" > "$target"
+  printf 'configured: %s\n' "$target"
 }
 
 if [ ! -f "$source_file" ]; then
@@ -40,5 +35,5 @@ if [ ! -f "$source_file" ]; then
   exit 1
 fi
 
-link_file "$HOME/.codex/AGENTS.md"
-link_file "$HOME/.claude/CLAUDE.md"
+write_file "$HOME/.codex/AGENTS.md" "Read and follow the instructions in $source_file before doing any work."
+write_file "$HOME/.claude/CLAUDE.md" "@$source_file"
