@@ -7,9 +7,10 @@ claude_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 
 skill_name=coding-style
-core_source="$repo_dir/core/agent-defaults.md"
+core_source="$repo_dir/core"
+core_index="$core_source/index.md"
 skill_source="$repo_dir/skills/$skill_name"
-core_target="$HOME/.agents/core/agent-defaults.md"
+core_target="$HOME/.agents/core"
 legacy_doc="$HOME/.agents/docs/personal-coding-style.md"
 
 begin_marker="<!-- agent-harness:begin -->"
@@ -103,21 +104,6 @@ $(cat "$block")"
   write_if_changed "$target" "$content"
 }
 
-sync_file() {
-  source="$1"
-  target="$2"
-
-  mkdir -p "$(dirname -- "$target")"
-
-  if [ -f "$target" ] && cmp -s "$source" "$target"; then
-    printf 'already current: %s\n' "$target"
-    return
-  fi
-
-  cp "$source" "$target"
-  printf 'installed: %s\n' "$target"
-}
-
 sync_tree() {
   source="$1"
   target="$2"
@@ -166,6 +152,32 @@ remove_path() {
   printf 'removed: %s\n' "$target"
 }
 
+assert_core_references() {
+  listed=$(sed -n 's/.*](\(references\/[^)]*\.md\)).*/\1/p' "$core_index" | sort)
+  actual=$(CDPATH= cd -- "$core_source" && find references -type f -name '*.md' -print | sort)
+
+  if [ "$listed" = "$actual" ]; then
+    return
+  fi
+
+  printf 'core/index.md must link every core reference exactly once\n' >&2
+  printf 'listed:\n%s\n' "$listed" >&2
+  printf 'actual:\n%s\n' "$actual" >&2
+  exit 1
+}
+
+render_codex_core() {
+  awk -v target="$core_target/references/" '
+    {
+      marker = "](references/"
+      while ((position = index($0, marker)) > 0) {
+        $0 = substr($0, 1, position - 1) "](" target substr($0, position + length(marker))
+      }
+      print
+    }
+  ' "$core_index"
+}
+
 if [ "${1:-}" = "--uninstall" ]; then
   remove_block "$claude_home/CLAUDE.md"
   remove_block "$codex_home/AGENTS.md"
@@ -176,8 +188,13 @@ if [ "${1:-}" = "--uninstall" ]; then
   exit 0
 fi
 
-if [ ! -f "$core_source" ]; then
-  printf 'missing source file: %s\n' "$core_source" >&2
+if [ ! -f "$core_index" ]; then
+  printf 'missing source file: %s\n' "$core_index" >&2
+  exit 1
+fi
+
+if [ ! -d "$core_source/references" ]; then
+  printf 'missing source directory: %s\n' "$core_source/references" >&2
   exit 1
 fi
 
@@ -188,20 +205,26 @@ fi
 
 # The Codex block carries this file inline, so a marker on its own line would
 # make the block boundary ambiguous and duplicate content on the next install.
-if grep -qxF -e "$begin_marker" -e "$end_marker" "$core_source"; then
-  printf 'refusing to install: %s has a managed-block marker on its own line\n' "$core_source" >&2
+if grep -qxF -e "$begin_marker" -e "$end_marker" "$core_index"; then
+  printf 'refusing to install: %s has a managed-block marker on its own line\n' "$core_index" >&2
   exit 1
 fi
 
-sync_file "$core_source" "$core_target"
+assert_core_references
+
+sync_tree "$core_source" "$core_target"
 sync_tree "$skill_source" "$HOME/.agents/skills/$skill_name"
 sync_tree "$skill_source" "$claude_home/skills/$skill_name"
-sync_tree "$skill_source" "$codex_home/skills/$skill_name"
+
+# Codex discovers user skills from ~/.agents/skills. Remove the duplicate path
+# written by older versions of this installer so the same skill is not listed twice.
+remove_path "$codex_home/skills/$skill_name"
 
 # Claude Code resolves `@` imports at session start, so a reference is enough.
-# Codex does not, so its block carries the defaults inline.
-sync_block "$claude_home/CLAUDE.md" "@$core_target"
-sync_block "$codex_home/AGENTS.md" "$(cat "$core_source")"
+# Codex does not, so its block carries the index inline with absolute links to
+# references that remain on demand.
+sync_block "$claude_home/CLAUDE.md" "@$core_target/index.md"
+sync_block "$codex_home/AGENTS.md" "$(render_codex_core)"
 
 if [ -f "$legacy_doc" ]; then
   printf 'note: %s is no longer referenced and can be deleted\n' "$legacy_doc"

@@ -2,18 +2,55 @@
 
 Personal agent instructions for Claude Code and Codex.
 
-Two layers, split by one line: **rules are always on, examples are on demand.**
+The harness has three information layers, separated by how often an agent needs
+them:
 
-- **`core/agent-defaults.md`** — always in context. Every rule: behavior (assumptions, scope, editing existing code, verification), code shape, naming, abstraction thresholds, JS/TS and React specifics, commits. Complete on its own.
-- **`skills/coding-style/`** — loaded on demand. Worked ❌/✅ pairs for the judgment calls that go wrong most often.
+- **`core/index.md`** — always in context. Compact standing orders plus explicit
+  triggers for deeper references. It is actionable on its own.
+- **`core/references/`** — loaded on demand. One file per decision domain with
+  boundaries, rationale, and small examples.
+- **`skills/`** — loaded on demand through skill matching. Reusable workflows and
+  extended judgment examples.
+
+The repository is the source of truth. Files under `~/.agents`, `~/.claude`, and
+`~/.codex` are installation outputs; edit this repository and rerun the installer.
+
+Repository maintenance rules live in [`AGENTS.md`](AGENTS.md). Claude Code reads the
+same rules through [`CLAUDE.md`](CLAUDE.md), which imports `AGENTS.md` instead of
+duplicating it.
 
 ## Why the split falls there
 
-No agent can make a skill always-on. Claude Code has no `alwaysApply` for skills, and neither does Codex — loading one is the model's decision, based on matching your request against the skill description. A rule you need every time cannot live there.
+A rule that must affect every coding task cannot depend on a skill or a reference
+being selected. The index therefore keeps every standing order in a concise form.
+References add detail only when a named trigger applies, while skills own repeatable
+procedures and worked examples.
 
-The guaranteed channel is `CLAUDE.md` / `AGENTS.md`. Claude Code resolves `@` imports at session start, so the content is literally in the prompt. Every rule therefore sits in `core/agent-defaults.md`.
+Splitting files does not automatically save context. Claude Code expands `@` imports
+into the startup prompt, and Codex has no documented equivalent inside `AGENTS.md`.
+The Claude entry point imports only the index; the Codex installer inlines the same
+index and rewrites its reference links to installed absolute paths. Neither entry
+point eagerly loads the references.
 
-The examples stay on demand for a different reason than cost. If a rule is not loaded, nothing applies. If an example is not loaded, the rule still applies — it is an aid for resolving a judgment call, not a rule. And it is 150 lines of code samples that would otherwise dilute the rules in every session that has nothing to do with code.
+See [docs/harness-architecture.md](docs/harness-architecture.md) for the researched
+loader behavior, design rationale, DeepSeek Harness lessons, and maintenance rules.
+
+## Core organization
+
+Each reference owns one domain:
+
+| Reference | Read when |
+| --- | --- |
+| `before-coding.md` | Ambiguity changes scope, persistence, compatibility, or behavior |
+| `scope-and-editing.md` | Adjacent cleanup or scope expansion appears necessary |
+| `code-design.md` | Extracting, generalizing, splitting, or configuring code |
+| `javascript-typescript.md` | A JS/TS choice adds shared or public surface |
+| `react.md` | Component, hook, or JSX boundaries are material |
+| `verification.md` | Selecting evidence that proves the requested outcome |
+| `commits.md` | Commit boundaries or Conventional Commit type are unclear |
+
+`core/index.md` is the authoritative manifest. The installer rejects missing,
+duplicate, and unlisted reference files.
 
 ## Install
 
@@ -25,41 +62,44 @@ Writes:
 
 | Path | What |
 | --- | --- |
-| `~/.agents/core/agent-defaults.md` | The always-on defaults |
-| `~/.agents/skills/coding-style/` | Canonical skill copy, shared across agents |
+| `~/.agents/core/` | Canonical installed index and references |
+| `~/.agents/skills/coding-style/` | Canonical cross-agent skill copy |
 | `~/.claude/skills/coding-style/` | Claude Code skill |
-| `~/.codex/skills/coding-style/` | Codex skill |
-| `~/.claude/CLAUDE.md` | A managed block importing the defaults |
-| `~/.codex/AGENTS.md` | A managed block with the defaults inline |
+| `~/.claude/CLAUDE.md` | Managed block importing `core/index.md` |
+| `~/.codex/AGENTS.md` | Managed block with the index inline |
 
-Honors `CLAUDE_CONFIG_DIR` and `CODEX_HOME`.
+The installer honors `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Re-running it is
+idempotent: current targets are reported without being rewritten.
 
-Claude Code and Codex use the same `SKILL.md` format — `name` and `description` frontmatter plus a markdown body — so one skill folder serves both.
+Claude Code and Codex use the same `SKILL.md` format, so one skill source serves
+both. Claude Code receives its tool-specific copy; Codex discovers the canonical
+user copy under `~/.agents/skills`. The installer removes the legacy duplicate under
+`~/.codex/skills` when upgrading an older installation.
 
-The entry points differ, and not just cosmetically. Claude Code resolves `@` imports into the prompt, so a one-line reference is enough. Codex includes `AGENTS.md` verbatim but does **not** follow references out of it — pointing at a file there only produces an instruction the model may or may not act on. So the Codex block carries the defaults inline.
-
-Re-run `./install.sh` after editing anything here. It copies, so the repo is the source of truth and the installed copies are outputs.
-
-Verify Codex picked it up:
+Verify Codex picked up the managed block:
 
 ```sh
-codex debug prompt-input | grep -c coding-style
+codex --ask-for-approval never "Summarize the current instructions."
 ```
 
-## Managed block
+## Managed blocks
 
-`CLAUDE.md` and `AGENTS.md` are files you also keep your own rules in, so the installer never overwrites them. It only replaces the region between its markers and leaves everything else alone:
+`CLAUDE.md` and `AGENTS.md` may contain unrelated personal rules, so the installer
+never overwrites the complete file. It only replaces the region between its markers:
 
 ```markdown
-# my own global rules
-...
+# unmanaged personal rules
 
 <!-- agent-harness:begin -->
-@/Users/you/.agents/core/agent-defaults.md
+...
 <!-- agent-harness:end -->
 ```
 
-Uninstall removes the block and the installed skills, leaving the rest of the file intact:
+Malformed or duplicate markers cause installation to stop rather than risk deleting
+unmanaged content.
+
+Uninstall removes the managed blocks and installed harness paths while leaving all
+other content intact:
 
 ```sh
 ./install.sh --uninstall
